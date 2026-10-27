@@ -1,0 +1,12 @@
+# Web Framework & CORS
+Flask>=3.0.0
+Flask-Cors>=4.0.0
+
+# Firebase Auth & Cloud Firestore
+firebase-admin>=6.5.0
+
+# Environment variables & security
+python-dotenv>=1.0.0
+
+# Production Server (Required for Render deployment)
+gunicorn>=21.2.0

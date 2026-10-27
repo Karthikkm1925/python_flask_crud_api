@@ -17,3 +17,7 @@ instance/
 .vscode/
 .idea/
 .myenv/
+
+# Firebase service account key
+*.json
+serviceAccountKey.json
