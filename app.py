@@ -21,23 +21,26 @@ if not os.path.exists(cred_path):
 cred = credentials.Certificate(cred_path)
 firebase_admin.initialize_app(cred)
 
-# Connect to Cloud Firestore
 db = firestore.client()
 COLLECTION_NAME = "tasks"
+
+# Valid statuses and priorities for validation & consistency
+VALID_STATUSES = ["not started", "in progress", "stopped", "completed", "started"]
+VALID_PRIORITIES = ["low", "medium", "high"]
 
 # ----------------------------------------------------
 # 3. Base & Health Check
 # ----------------------------------------------------
 @app.get("/")
 def home():
-    return "<h1>Flask + Cloud Firestore API</h1><p>Visit /api/health or /api/tasks</p>"
+    return "<h1>Task Buddy API</h1><p>Visit /api/health or /api/tasks</p>"
 
 @app.get("/api/health")
 def health_check():
     return jsonify({
-        "status": "Running",
-        "database": "Connected to Cloud Firestore",
-        "project": "fir-management-system-46de7"
+        "status": "healthy",
+        "service": "Task Buddy API",
+        "database": "connected"
     }), 200
 
 # ----------------------------------------------------
@@ -51,6 +54,10 @@ def get_all_tasks():
         for doc in tasks_ref:
             task = doc.to_dict()
             task["id"] = doc.id
+            # Normalize defaults for existing tasks
+            task["status"] = task.get("status", "not started")
+            task["priority"] = task.get("priority", "medium")
+
             if "created_at" in task and task["created_at"]:
                 task["created_at"] = task["created_at"].isoformat()
             if "updated_at" in task and task["updated_at"]:
@@ -62,7 +69,7 @@ def get_all_tasks():
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------
-# 5. READ ONE (Get single task by Firestore document ID)
+# 5. READ ONE (Get single task)
 # ----------------------------------------------------
 @app.get("/api/tasks/<string:task_id>")
 def get_task(task_id):
@@ -73,6 +80,9 @@ def get_task(task_id):
         
         task = doc.to_dict()
         task["id"] = doc.id
+        task["status"] = task.get("status", "not started")
+        task["priority"] = task.get("priority", "medium")
+
         if "created_at" in task and task["created_at"]:
             task["created_at"] = task["created_at"].isoformat()
         if "updated_at" in task and task["updated_at"]:
@@ -83,7 +93,7 @@ def get_task(task_id):
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------
-# 6. CREATE (Add a new task to Firestore)
+# 6. CREATE (Add a new task)
 # ----------------------------------------------------
 @app.post("/api/tasks")
 def create_task():
@@ -92,19 +102,28 @@ def create_task():
         if not data or "title" not in data or not data["title"].strip():
             return jsonify({"error": "'title' field is required"}), 400
 
+        # Validate & normalize status (not started, started, in progress, stopped)
+        status = data.get("status", "not started").lower().strip()
+        if status not in VALID_STATUSES:
+            status = "not started"
+
+        # Validate & normalize priority (low, medium, high)
+        priority = data.get("priority", "medium").lower().strip()
+        if priority not in VALID_PRIORITIES:
+            priority = "medium"
+
         new_task = {
             "title": data["title"].strip(),
-            "description": data.get("description", ""),
-            "completed": data.get("completed", False),
-            "priority": data.get("priority", "medium"),
+            "description": data.get("description", "").strip(),
+            "status": status,
+            "priority": priority,
+            "completed": status == "in progress",
             "created_at": firestore.SERVER_TIMESTAMP
         }
 
-        # Save to Firestore (auto-generates unique document ID)
         doc_ref = db.collection(COLLECTION_NAME).document()
         doc_ref.set(new_task)
 
-        # Return response with generated ID
         new_task["id"] = doc_ref.id
         new_task["created_at"] = "just now"
         return jsonify({"message": "Task created successfully", "task": new_task}), 201
@@ -112,7 +131,7 @@ def create_task():
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------
-# 7. UPDATE (Update task by Firestore document ID)
+# 7. UPDATE (Update task by ID)
 # ----------------------------------------------------
 @app.put("/api/tasks/<string:task_id>")
 def update_task(task_id):
@@ -123,13 +142,25 @@ def update_task(task_id):
 
         data = request.get_json() or {}
         update_data = {}
-        for field in ["title", "description", "completed", "priority"]:
-            if field in data:
-                update_data[field] = data[field]
 
-        # Automatically track edit timestamp
+        if "title" in data:
+            update_data["title"] = data["title"].strip()
+        if "description" in data:
+            update_data["description"] = data["description"].strip()
+        if "priority" in data:
+            priority = data["priority"].lower().strip()
+            if priority in VALID_PRIORITIES:
+                update_data["priority"] = priority
+        if "status" in data:
+            status = data["status"].lower().strip()
+            if status in VALID_STATUSES:
+                update_data["status"] = status
+                update_data["completed"] = (status == "stopped")
+        if "completed" in data and "status" not in data:
+            update_data["completed"] = data["completed"]
+            update_data["status"] = "stopped" if data["completed"] else "in progress"
+
         update_data["updated_at"] = firestore.SERVER_TIMESTAMP
-
         doc_ref.update(update_data)
 
         updated_doc = doc_ref.get().to_dict()
@@ -144,7 +175,7 @@ def update_task(task_id):
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------
-# 8. DELETE (Delete task by Firestore document ID)
+# 8. DELETE (Delete task)
 # ----------------------------------------------------
 @app.delete("/api/tasks/<string:task_id>")
 def delete_task(task_id):
